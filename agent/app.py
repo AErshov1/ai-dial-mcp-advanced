@@ -24,15 +24,23 @@ async def main():
     # 9. Create simple console chat (as we done in previous tasks)
     async with await CustomMCPClient.create('http://localhost:8005/mcp') as mcp_client:
         tools = await mcp_client.get_tools()
-        print(f"=> Tools: {tools}")
+        print(f"=> User Management Tools: {tools}")
+
+        fetch_mcp_client = await MCPClient.create("https://remote.mcpservers.org/fetch/mcp")
+        fetch_tools = await fetch_mcp_client.get_tools()
+        print(f"=> Fetch Tools: {fetch_tools}")
 
         tool_map: dict[str, CustomMCPClient] = {}
         for t in tools:
             tool_map[t["function"]["name"]] = mcp_client
+        for t in fetch_tools:
+            tool_map[t["function"]["name"]] = fetch_mcp_client
+
+        all_tools = tools + fetch_tools
         dial_client = DialClient(
             api_key=API_KEY,
             endpoint=DIAL_ENDPOINT,
-            tools=tools,
+            tools=all_tools,
             tool_name_client_map=tool_map
         )
 
