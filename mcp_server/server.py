@@ -5,8 +5,8 @@ from fastapi.responses import StreamingResponse
 import uvicorn
 
 from mcp_server.services.mcp_server import MCPServer
-from models.request import MCPRequest
-from models.response import MCPResponse, ErrorResponse
+from mcp_server.models.request import MCPRequest
+from mcp_server.models.response import MCPResponse, ErrorResponse
 
 MCP_SESSION_ID_HEADER = "Mcp-Session-Id"
 
@@ -17,32 +17,43 @@ mcp_server = MCPServer()
 
 def _validate_accept_header(accept_header: Optional[str]) -> bool:
     """Validate that client accepts both JSON and SSE"""
-    #TODO:
     # 1. Check if `accept_header` is None or falsy, return False if so
     # 2. Split `accept_header` by commas and create `accept_types` list with stripped and lowercased values
     # 3. Check if any type in `accept_types` contains 'application/json' and assign to `has_json`
     # 4. Check if any type in `accept_types` contains 'text/event-stream' and assign to `has_sse`
     # 5. Return `has_json and has_sse`
-    raise NotImplementedError()
+    if not accept_header:
+        return False
+    accept_types = [t.strip().lower() for t in accept_header.split(",")]
+    has_json = any("application/json" in t for t in accept_types)
+    has_sse = any("text/event-stream" in t for t in accept_types)
+    return has_json and has_sse
 
-async def _create_sse_stream(messages: list):
+
+async def _create_sse_stream(messages):
     """Create Server-Sent Events stream for responses"""
-    #TODO:
+    # TODO:
     # 1. Iterate through `messages` list
     # 2. For each message, create `event_data` string in format: f"data: {json.dumps(message.dict(exclude_none=True))}\n\n"
     # 3. Yield `event_data.encode('utf-8')`
     # 4. After loop, yield final message: b"data: [DONE]\n\n" (indicator that the streaming is finished)
-    raise NotImplementedError()
+    for message in messages:
+        event_data = f"data: {json.dumps(message.dict(exclude_none=True))}\n\n"
+        print("=> stream message:", event_data)
+        yield event_data.encode('utf-8')
+    yield b"data: [DONE]\n\n"
+
 
 @app.post("/mcp")
 async def handle_mcp_request(
         request: MCPRequest,
         response: Response,
         accept: Optional[str] = Header(None),
-        mcp_session_id: Optional[str] = Header(None, alias=MCP_SESSION_ID_HEADER)
+        mcp_session_id: Optional[str] = Header(
+            None, alias=MCP_SESSION_ID_HEADER)
 ):
     """Single MCP endpoint handling all JSON-RPC requests with proper session management"""
-    #TODO:
+    # TODO:
     # 1. Validate Accept header:
     #       - Call `_validate_accept_header(accept)`
     #       - If False, create `error_response` with MCPResponse:
@@ -81,7 +92,105 @@ async def handle_mcp_request(
     #       - content=_create_sse_stream([mcp_response])
     #       - media_type="text/event-stream"
     #       - headers={"Cache-Control": "no-cache", "Connection": "keep-alive", MCP_SESSION_ID_HEADER: mcp_session_id}
-    raise NotImplementedError()
+    # 1. Validate Accept header
+    if not _validate_accept_header(accept):
+        error_response = MCPResponse(
+            id="server-error",
+            error=ErrorResponse(
+                code=-32600,
+                message="Client must accept both application/json and text/event-stream"
+            )
+        )
+        return Response(
+            status_code=406,
+            content=error_response.model_dump_json(),
+            media_type="application/json"
+        )
+
+    # Parse MCPRequest from request body
+    # body = await request.body()
+    # mcp_req = MCPRequest.model_validate_json(body)
+    mcp_req = request
+
+    # 2. Handle initialization (no session required)
+    if mcp_req.method == "initialize":
+        mcp_response, session_id = mcp_server.handle_initialize(mcp_req)
+        headers = {"Cache-Control": "no-cache", "Connection": "keep-alive"}
+        if session_id:
+            headers[MCP_SESSION_ID_HEADER] = session_id
+            mcp_session_id = session_id
+        return StreamingResponse(
+            _create_sse_stream([mcp_response]),
+            media_type="text/event-stream",
+            headers=headers
+        )
+
+    # 3. Handle other methods (session required)
+    if not mcp_session_id:
+        error_response = MCPResponse(
+            id="server-error",
+            error=ErrorResponse(
+                code=-32600,
+                message="Missing session ID"
+            )
+        )
+        return Response(
+            status_code=400,
+            content=error_response.model_dump_json(),
+            media_type="application/json"
+        )
+
+    session = mcp_server.get_session(mcp_session_id)
+    if not session:
+        return Response(
+            status_code=400,
+            content="No valid session ID provided"
+        )
+
+    if mcp_req.method == "notifications/initialized":
+        session.ready_for_operation = True
+        return Response(
+            status_code=202,
+            headers={MCP_SESSION_ID_HEADER: session.session_id}
+        )
+
+    if not session.ready_for_operation:
+        error_response = MCPResponse(
+            id="server-error",
+            error=ErrorResponse(
+                code=-32600,
+                message="Missing session ID"
+            )
+        )
+        return Response(
+            status_code=400,
+            content=error_response.model_dump_json(),
+            media_type="application/json"
+        )
+
+    if mcp_req.method == "tools/list":
+        mcp_response = mcp_server.handle_tools_list(mcp_req)
+    elif mcp_req.method == "tools/call":
+        mcp_response = await mcp_server.handle_tools_call(mcp_req)
+    else:
+        mcp_response = MCPResponse(
+            id=mcp_req.id,
+            error=ErrorResponse(
+                code=-32602,
+                message=f"Method '{mcp_req.method}' not found"
+            )
+        )
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        MCP_SESSION_ID_HEADER: mcp_session_id
+    }
+    return StreamingResponse(
+        _create_sse_stream([mcp_response]),
+        media_type="text/event-stream",
+        headers=headers
+    )
 
 
 if __name__ == "__main__":

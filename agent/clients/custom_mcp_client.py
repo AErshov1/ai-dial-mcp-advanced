@@ -114,9 +114,13 @@ class CustomMCPClient:
         buffer = ""
         async for line in response.content:
             decoded_line = line.decode("utf-8").strip()
-            if decoded_line.startswith("data:"):
+            print("=> RECEIVED:", decoded_line)
+            if decoded_line.startswith("data: {"):
                 buffer += decoded_line[5:].strip()
+            if decoded_line == "data: [DONE]":
+                break
         if buffer:
+            print("=> PARSE:", buffer)
             return json.loads(buffer)
 
         return {}

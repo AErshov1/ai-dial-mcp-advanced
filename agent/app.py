@@ -22,7 +22,7 @@ async def main():
     # 7. Create DialClient, endpoint is `https://ai-proxy.lab.epam.com`
     # 8. Create array with Messages and add there System message with simple instructions for LLM that it should help to handle user request
     # 9. Create simple console chat (as we done in previous tasks)
-    async with await CustomMCPClient.create('http://localhost:8005/mcp') as mcp_client:
+    async with await CustomMCPClient.create('http://localhost:8000/mcp') as mcp_client:
         tools = await mcp_client.get_tools()
         print(f"=> User Management Tools: {tools}")
 
@@ -57,7 +57,8 @@ async def main():
                 break
 
             if user_input:
-                chat_history.append(Message(role=Role.USER, content=user_input))
+                chat_history.append(
+                    Message(role=Role.USER, content=user_input))
 
                 response_message = await dial_client.get_completion(chat_history)
                 chat_history.append(response_message)
